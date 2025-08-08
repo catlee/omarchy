@@ -2,8 +2,23 @@
 
 # Locks the system using hyprlock, but not before ensuring 1password has also been locked, and the screensaver stopped.
 
-# Lock the screen
-pidof hyprlock || hyprlock &
+SWITCH_USER=false
+if [[ "${1:-}" == "--switch-user" ]]; then
+  SWITCH_USER=true
+fi
+
+# In multiuser mode, default lock behavior should hand off to greeter.
+# Derive from system state (SDDM enabled + no autologin) instead of marker files.
+if systemctl is-enabled sddm.service >/dev/null 2>&1 && [[ ! -f /etc/sddm.conf.d/autologin.conf ]]; then
+  SWITCH_USER=true
+fi
+
+# Lock behavior:
+# - normal lock: use hyprlock
+# - switch-user: let display-manager handoff provide the lock boundary
+if [[ "$SWITCH_USER" != "true" ]]; then
+  pidof hyprlock || hyprlock &
+fi
 
 # Set keyboard layout to default (first layout)
 hyprctl switchxkblayout all 0 > /dev/null 2>&1
@@ -15,3 +30,40 @@ fi
 
 # Avoid running screensaver when locked
 pkill -f org.omarchy.screensaver
+
+if [[ "$SWITCH_USER" == "true" ]]; then
+  # Hand off to SDDM greeter so another user can log in.
+  DID_HANDOFF=false
+
+  # Primary path: ask SDDM directly to switch to greeter.
+  if busctl --system call \
+      org.freedesktop.DisplayManager \
+      /org/freedesktop/DisplayManager/Seat0 \
+      org.freedesktop.DisplayManager.Seat \
+      SwitchToGreeter >/dev/null 2>&1; then
+    DID_HANDOFF=true
+  fi
+
+  # Fallback: activate an already-running greeter session if one exists.
+  if [[ "$DID_HANDOFF" != "true" ]]; then
+    SDDM_SESSION_ID=$(loginctl list-sessions --no-legend 2>/dev/null | awk '$3=="sddm" && $6=="greeter"{print $1; exit}')
+    if [[ -n "$SDDM_SESSION_ID" ]] && loginctl activate "$SDDM_SESSION_ID" >/dev/null 2>&1; then
+      DID_HANDOFF=true
+    fi
+  fi
+
+  # Final fallback: switch to VT2 (default SDDM VT in this setup), then try VT1.
+  if [[ "$DID_HANDOFF" != "true" ]]; then
+    for tty in 2 1; do
+      if sudo -n chvt "$tty" >/dev/null 2>&1; then
+        DID_HANDOFF=true
+        break
+      fi
+    done
+  fi
+
+  # If we couldn't hand off, still lock current session.
+  if [[ "$DID_HANDOFF" != "true" ]]; then
+    pidof hyprlock || hyprlock &
+  fi
+fi

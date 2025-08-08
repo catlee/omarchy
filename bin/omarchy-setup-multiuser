@@ -1,0 +1,51 @@
+#!/bin/bash
+set -euo pipefail
+
+~/.local/share/omarchy/bin/omarchy-show-logo
+
+echo "Configuring multiuser login with SDDM"
+
+if ! pacman -Q sddm >/dev/null 2>&1; then
+  echo "Installing SDDM dependencies"
+  echo "Refreshing pacman keyring + package databases"
+  if command -v omarchy-update-keyring >/dev/null 2>&1; then
+    omarchy-update-keyring
+  else
+    sudo pacman -Sy --noconfirm archlinux-keyring >/dev/null
+  fi
+  sudo pacman -Syy --noconfirm >/dev/null
+  sudo pacman -S --noconfirm --needed sddm libsecret gnome-keyring
+fi
+
+if command -v omarchy-refresh-sddm >/dev/null 2>&1; then
+  echo "Refreshing Omarchy SDDM theme (background/colors/font from current Omarchy theme)"
+  omarchy-refresh-sddm
+fi
+
+echo "Disabling SDDM autologin"
+sudo rm -f /etc/sddm.conf.d/autologin.conf
+
+echo "Pinning SDDM theme to omarchy"
+sudo mkdir -p /etc/sddm.conf.d
+cat <<'EOF' | sudo tee /etc/sddm.conf.d/theme.conf >/dev/null
+[Theme]
+Current=omarchy
+EOF
+
+echo "Ensuring SDDM PAM avoids encrypted login keyring creation"
+sudo sed -i '/-auth.*pam_gnome_keyring\.so/d' /etc/pam.d/sddm
+sudo sed -i '/-password.*pam_gnome_keyring\.so/d' /etc/pam.d/sddm
+
+echo "Enabling SDDM service"
+sudo systemctl enable sddm.service
+
+if [[ "${SDDM_APPLY_NOW:-0}" == "1" ]]; then
+  echo "Applying now: restarting SDDM (this will end current graphical session)"
+  sudo systemctl restart sddm.service
+else
+  echo "Configured. To apply immediately: sudo systemctl restart sddm.service"
+  echo "Otherwise reboot and verify SDDM login without autologin."
+fi
+
+echo "Tip: after changing Omarchy theme/background/font, rerun:"
+echo "  omarchy-refresh-sddm"

@@ -1,0 +1,6 @@
+TODO for multiuser:
+- Add a way to disable multiuser. Need to restore autologin. Maybe we shouldn't remove it?
+- Do we have a better template renderer than sed?
+- Check keyring stuff
+- Do we need to pin SDDM theme to omarchy?
+

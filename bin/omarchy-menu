@@ -235,7 +235,7 @@ show_setup_menu() {
   local options="  Audio\n  Wifi\n󰂯  Bluetooth\n󱐋  Power Profile\n  System Sleep\n󰍹  Monitors"
   [[ -f ~/.config/hypr/bindings.conf ]] && options="$options\n  Keybindings"
   [[ -f ~/.config/hypr/input.conf ]] && options="$options\n  Input"
-  options="$options\n󰱔  DNS\n  Security\n  Config"
+  options="$options\n󰱔  DNS\n  Security\n  Multiuser\n  Config"
 
   case $(menu "Setup" "$options") in
   *Audio*) omarchy-launch-audio ;;
@@ -249,6 +249,7 @@ show_setup_menu() {
   *DNS*) present_terminal omarchy-setup-dns ;;
   *Security*) show_setup_security_menu ;;
   *Config*) show_setup_config_menu ;;
+  *Multiuser*) present_terminal omarchy-setup-multiuser ;;
   *) show_main_menu ;;
   esac
 }

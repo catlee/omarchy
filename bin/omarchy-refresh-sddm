@@ -1,6 +1,140 @@
 #!/bin/bash
 
-# Refresh the SDDM theme from default
+set -euo pipefail
 
-sudo rm -rf /usr/share/sddm/themes/omarchy
-sudo cp -r $OMARCHY_PATH/default/sddm/omarchy /usr/share/sddm/themes/omarchy
+THEME_NAME="omarchy"
+THEME_SRC="$OMARCHY_PATH/default/sddm/$THEME_NAME"
+TARGET_DIR="/usr/share/sddm/themes/$THEME_NAME"
+
+REAL_USER="${SUDO_USER:-${USER:-}}"
+REAL_HOME="$HOME"
+if [[ -n "$REAL_USER" ]]; then
+  user_home=$(getent passwd "$REAL_USER" | cut -d: -f6 || true)
+  if [[ -n "$user_home" ]]; then
+    REAL_HOME="$user_home"
+  fi
+fi
+
+COLORS_FILE="$REAL_HOME/.config/omarchy/current/theme/colors.toml"
+CURRENT_BACKGROUND_LINK="$REAL_HOME/.config/omarchy/current/background"
+THEME_BACKGROUNDS_DIR="$REAL_HOME/.config/omarchy/current/theme/backgrounds"
+WAYBAR_STYLE="$REAL_HOME/.config/waybar/style.css"
+
+toml_value() {
+  local key="$1"
+  local file="$2"
+  awk -F= -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      gsub(/^"|"$/, "", $2)
+      print $2
+      exit
+    }
+  ' "$file" 2>/dev/null
+}
+
+hex_with_alpha() {
+  local hex="${1#\#}"
+  local alpha="$2"
+  printf "#%s%s" "$alpha" "$hex"
+}
+
+escape_sed_replacement() {
+  sed -e 's/[\/&]/\\&/g'
+}
+
+background="#1a1b26"
+foreground="#a9b1d6"
+accent="#7aa2f7"
+selection_foreground="#c0caf5"
+selection_background="#7aa2f7"
+error_color="#f7768e"
+
+if [[ -f "$COLORS_FILE" ]]; then
+  background="$(toml_value background "$COLORS_FILE" || true)"
+  foreground="$(toml_value foreground "$COLORS_FILE" || true)"
+  accent="$(toml_value accent "$COLORS_FILE" || true)"
+  selection_foreground="$(toml_value selection_foreground "$COLORS_FILE" || true)"
+  selection_background="$(toml_value selection_background "$COLORS_FILE" || true)"
+  error_color="$(toml_value color1 "$COLORS_FILE" || true)"
+
+  background="${background:-#1a1b26}"
+  foreground="${foreground:-#a9b1d6}"
+  accent="${accent:-#7aa2f7}"
+  selection_foreground="${selection_foreground:-$foreground}"
+  selection_background="${selection_background:-$accent}"
+  error_color="${error_color:-#f7768e}"
+fi
+
+theme_font="JetBrainsMono Nerd Font"
+if [[ -f "$WAYBAR_STYLE" ]]; then
+  parsed_font="$(grep -oP 'font-family:\s*["'\'']?\K[^;"'\'']+' "$WAYBAR_STYLE" | head -n1 || true)"
+  if [[ -n "$parsed_font" ]]; then
+    theme_font="$parsed_font"
+  fi
+fi
+
+tmp_dir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+cp -r "$THEME_SRC" "$tmp_dir/$THEME_NAME"
+render_dir="$tmp_dir/$THEME_NAME"
+
+background_source=""
+background_path=""
+resolved_bg=""
+if [[ -L "$CURRENT_BACKGROUND_LINK" || -f "$CURRENT_BACKGROUND_LINK" ]]; then
+  resolved_bg="$(readlink -f "$CURRENT_BACKGROUND_LINK" || true)"
+fi
+
+if [[ -z "$resolved_bg" || ! -f "$resolved_bg" ]]; then
+  if [[ -d "$THEME_BACKGROUNDS_DIR" ]]; then
+    resolved_bg="$(find "$THEME_BACKGROUNDS_DIR" -maxdepth 1 -type f | sort | head -n1 || true)"
+  fi
+fi
+
+if [[ -n "$resolved_bg" && -f "$resolved_bg" ]]; then
+  bg_ext="${resolved_bg##*.}"
+  cp "$resolved_bg" "$render_dir/background.$bg_ext"
+  background_source="background.$bg_ext"
+  background_path="background.$bg_ext"
+fi
+
+template="$render_dir/Main.qml.tpl"
+if [[ -f "$template" ]]; then
+  sed \
+    -e "s|{{ sddm_font }}|$(printf '%s' "$theme_font" | escape_sed_replacement)|g" \
+    -e "s|{{ sddm_background }}|$background|g" \
+    -e "s|{{ sddm_foreground }}|$foreground|g" \
+    -e "s|{{ sddm_accent }}|$accent|g" \
+    -e "s|{{ sddm_selection_foreground }}|$selection_foreground|g" \
+    -e "s|{{ sddm_selection_background }}|$selection_background|g" \
+    -e "s|{{ sddm_error }}|$error_color|g" \
+    -e "s|{{ sddm_panel_bg }}|$(hex_with_alpha "$background" "E6")|g" \
+    -e "s|{{ sddm_inner_panel_bg }}|$(hex_with_alpha "$background" "F2")|g" \
+    -e "s|{{ sddm_input_bg }}|$(hex_with_alpha "$background" "CC")|g" \
+    -e "s|{{ sddm_border }}|$(hex_with_alpha "$foreground" "55")|g" \
+    -e "s|{{ sddm_border_strong }}|$(hex_with_alpha "$foreground" "AA")|g" \
+    -e "s|{{ sddm_faint }}|$(hex_with_alpha "$foreground" "88")|g" \
+    -e "s|{{ sddm_muted }}|$(hex_with_alpha "$foreground" "B3")|g" \
+    -e "s|{{ sddm_background_source }}|$(printf '%s' "$background_source" | escape_sed_replacement)|g" \
+    "$template" >"$render_dir/Main.qml"
+fi
+
+rm -f "$render_dir/Main.qml.tpl"
+
+if [[ -n "$background_path" ]]; then
+  cat >"$render_dir/theme.conf.user" <<EOF
+[General]
+background=$background_path
+defaultBackground=$background_path
+EOF
+else
+  rm -f "$render_dir/theme.conf.user"
+fi
+
+sudo rm -rf "$TARGET_DIR"
+sudo cp -r "$render_dir" "$TARGET_DIR"
