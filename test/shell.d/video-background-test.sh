@@ -18,6 +18,7 @@ const themeNeedfile = fs.readFileSync(path.join(root, 'needfile'), 'utf8')
 const quattroUpgrade = fs.readFileSync(path.join(root, 'bin/omarchy-upgrade-to-quattro'), 'utf8')
 const barTextColor = fs.readFileSync(path.join(root, 'bin/omarchy-bar-text-color'), 'utf8')
 const menuImages = fs.readFileSync(path.join(root, 'bin/omarchy-menu-images'), 'utf8')
+const thumbnailBuilder = fs.readFileSync(path.join(root, 'bin/omarchy-thumbnail-build'), 'utf8')
 const lockService = fs.readFileSync(path.join(root, 'shell/plugins/lock/Service.qml'), 'utf8')
 const batteryService = fs.readFileSync(path.join(root, 'shell/plugins/services/battery/Service.qml'), 'utf8')
 const themeSet = fs.readFileSync(path.join(root, 'bin/omarchy-theme-set'), 'utf8')
@@ -96,8 +97,8 @@ assert(
   'bar colour sampling reads one frame instead of decoding a whole video'
 )
 assert(
-  menuImages.includes('pending_video_file') && /video_jobs=\$\(\( \$\(nproc\) \/ 4 \)\)/.test(menuImages),
-  'video thumbnails fan out narrower than single-threaded vips jobs'
+  menuImages.includes('build_thumbnails video') && menuImages.includes('OMARCHY_NEED_BIN'),
+  'Need builds video thumbnails with a narrower job limit'
 )
 assert(
   themeSwitcher.includes('need --file') &&
@@ -111,14 +112,14 @@ assert(
   'a video never stands in as its own lazy thumbnail, so the fan out cap always applies'
 )
 assert(
-  /thumbnail_command=\(timeout -k \d+ \d+ ffmpegthumbnailer/.test(menuImages),
+  /timeout -k \d+ \d+ ffmpegthumbnailer/.test(thumbnailBuilder),
   'a stalled video cannot hold the picker shut, because its generator is time bounded'
 )
 assert(
-  directImageList.includes('generate_video_thumbnail') &&
-    /timeout -k \d+ \d+ ffmpegthumbnailer/.test(directImageList) &&
-    /if \[\[ ! -f \$thumbnail \]\] && ! is_video_path/.test(directImageList),
-  'a direct picker scan generates bounded video thumbnails without content-hashing the media'
+  directImageList.includes('thumbnails/video/%.jpg: %') &&
+    directImageList.includes('OMARCHY_NEED_BIN') &&
+    !directImageList.includes('md5sum "$image"'),
+  'a direct picker scan shares Need-managed video thumbnails without content-hashing media'
 )
 assert(
   themeSet.includes('choose_staged_theme_background') &&
@@ -196,18 +197,68 @@ SH
 chmod +x "$test_tmp/bin/md5sum"
 
 md5_file_calls="$test_tmp/md5-file-calls"
-PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$test_tmp/generator-cache" MD5_FILE_CALLS="$md5_file_calls" \
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$test_tmp/generator-cache" MD5_FILE_CALLS="$md5_file_calls" \
   "$ROOT/bin/omarchy-menu-images" --prepare-only "$test_tmp/backgrounds"
 
-generator_thumbnail=$(find "$test_tmp/generator-cache/omarchy/image-selector" -maxdepth 1 -type f -name '*.jpg' -print -quit)
+generator_thumbnail=$(find "$test_tmp/generator-cache/omarchy/image-selector" -type f -name '*.jpg' -print -quit)
 [[ -s $generator_thumbnail ]] || fail "menu image generator creates a video thumbnail"
 
-generator_row=$(XDG_CACHE_HOME="$test_tmp/generator-cache" "$ROOT/shell/plugins/image-picker/list.sh" "$test_tmp/backgrounds")
+generator_row=$(OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$test_tmp/generator-cache" "$ROOT/shell/plugins/image-picker/list.sh" "$test_tmp/backgrounds")
 IFS=$'\t' read -r generator_row_path generator_row_thumbnail <<<"$generator_row"
 [[ $generator_row_path == "$test_tmp/backgrounds/sample.mp4" && $generator_row_thumbnail == "$generator_thumbnail" ]] || \
   fail "direct picker consumes the menu image generator thumbnail" "$generator_row"
 
-row=$(PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$test_tmp/direct-cache" MD5_FILE_CALLS="$md5_file_calls" \
+cat >"$test_tmp/bin/vipsthumbnail" <<'SH'
+#!/bin/bash
+while (( $# > 0 )); do
+  case "$1" in
+    --path) output=${2%%\[*}; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf 'thumbnail\n' >"$output"
+printf 'call\n' >>"$VIPS_CALLS"
+SH
+chmod +x "$test_tmp/bin/vipsthumbnail"
+
+still_backgrounds="$test_tmp/still-backgrounds"
+still_cache="$test_tmp/still-cache"
+still_calls="$test_tmp/still-calls"
+mkdir -p "$still_backgrounds"
+printf 'one\n' >"$still_backgrounds/one.png"
+printf 'two\n' >"$still_backgrounds/two.png"
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$still_cache" VIPS_CALLS="$still_calls" \
+  "$ROOT/bin/omarchy-menu-images" --prepare-only "$still_backgrounds"
+[[ $(wc -l <"$still_calls") == 2 ]] || fail "Need generates every initial still thumbnail"
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$still_cache" VIPS_CALLS="$still_calls" \
+  "$ROOT/bin/omarchy-menu-images" --prepare-only "$still_backgrounds"
+[[ $(wc -l <"$still_calls") == 2 ]] || fail "Need leaves current still thumbnails alone"
+missing_thumbnail=$(find "$still_cache/omarchy/image-selector/thumbnails/still" -type f -name '*.jpg' -print -quit)
+rm -f "$missing_thumbnail"
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$still_cache" VIPS_CALLS="$still_calls" \
+  "$ROOT/bin/omarchy-menu-images" --prepare-only "$still_backgrounds"
+[[ $(wc -l <"$still_calls") == 3 ]] || fail "Need rebuilds only a missing still thumbnail"
+printf 'one changed\n' >"$still_backgrounds/one.png"
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$still_cache" VIPS_CALLS="$still_calls" \
+  "$ROOT/bin/omarchy-menu-images" --prepare-only "$still_backgrounds"
+[[ $(wc -l <"$still_calls") == 4 ]] || fail "Need rebuilds only a changed still thumbnail"
+
+concurrent_backgrounds="$test_tmp/concurrent-backgrounds"
+concurrent_cache="$test_tmp/concurrent-cache"
+concurrent_calls="$test_tmp/concurrent-calls"
+mkdir -p "$concurrent_backgrounds"
+printf 'one\n' >"$concurrent_backgrounds/one.png"
+printf 'two\n' >"$concurrent_backgrounds/two.png"
+for _ in 1 2; do
+  PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$concurrent_cache" VIPS_CALLS="$concurrent_calls" \
+    "$ROOT/bin/omarchy-menu-images" --prepare-only "$concurrent_backgrounds" &
+done
+wait
+[[ $(wc -l <"$concurrent_calls") == 2 ]] || fail "Need shares thumbnail work between concurrent pickers"
+[[ $(find "$concurrent_cache/omarchy/image-selector/thumbnails/still" -type f -name '*.jpg' | wc -l) == 2 ]] || \
+  fail "concurrent Need builds publish every still thumbnail"
+
+row=$(PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$test_tmp/direct-cache" MD5_FILE_CALLS="$md5_file_calls" \
   "$ROOT/shell/plugins/image-picker/list.sh" "$test_tmp/backgrounds")
 
 IFS=$'\t' read -r row_path row_thumbnail <<<"$row"
@@ -224,15 +275,15 @@ cat >"$test_tmp/bin/ffmpegthumbnailer" <<'SH'
 exit 1
 SH
 
-cached_row=$(PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$test_tmp/direct-cache" MD5_FILE_CALLS="$md5_file_calls" \
+cached_row=$(PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$test_tmp/direct-cache" MD5_FILE_CALLS="$md5_file_calls" \
   "$ROOT/shell/plugins/image-picker/list.sh" "$test_tmp/backgrounds")
 [[ $cached_row == "$row" ]] || fail "direct picker reuses its cached video thumbnail" "$cached_row"
 
-failed_rows=$(PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$failed_cache" MD5_FILE_CALLS="$md5_file_calls" \
+failed_rows=$(PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$failed_cache" MD5_FILE_CALLS="$md5_file_calls" \
   "$ROOT/shell/plugins/image-picker/list.sh" "$failed_backgrounds")
 [[ -z $failed_rows ]] || fail "direct picker omits a video whose thumbnail fails" "$failed_rows"
 
-failed_marker=$(find "$failed_cache/omarchy/image-selector" -maxdepth 1 -type f -name '*.failed' -print -quit)
+failed_marker=$(find "$failed_cache/omarchy/image-selector" -type f -name '*.failed' -print -quit)
 [[ -n $failed_marker ]] || fail "direct picker remembers a video the converter rejected"
 
 thumbnailer_calls="$test_tmp/thumbnailer-calls"
@@ -242,26 +293,26 @@ printf '%s\n' "$*" >>"$THUMBNAILER_CALLS"
 exit 1
 SH
 
-failed_rows=$(PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
+failed_rows=$(PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
   "$ROOT/shell/plugins/image-picker/list.sh" "$failed_backgrounds")
 [[ -z $failed_rows && ! -e $thumbnailer_calls ]] || fail "direct picker skips a rejected video on the next scan" "$(cat "$thumbnailer_calls" 2>/dev/null)"
 
 generator_failed_cache="$test_tmp/generator-failed-cache"
-PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$generator_failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$generator_failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
   "$ROOT/bin/omarchy-menu-images" --prepare-only "$failed_backgrounds"
 [[ -s $thumbnailer_calls ]] || fail "menu image generator tries a video it has not seen"
-generator_marker=$(find "$generator_failed_cache/omarchy/image-selector" -maxdepth 1 -type f -name '*.failed' -print -quit)
+generator_marker=$(find "$generator_failed_cache/omarchy/image-selector" -type f -name '*.failed' -print -quit)
 [[ -n $generator_marker ]] || fail "menu image generator remembers a video the converter rejected"
 rm -f "$thumbnailer_calls"
-PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$generator_failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$generator_failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
   "$ROOT/bin/omarchy-menu-images" --prepare-only "$failed_backgrounds"
 [[ ! -e $thumbnailer_calls ]] || fail "menu image generator skips a rejected video on the next open" "$(<"$thumbnailer_calls")"
 
 # A repaired file gets a fresh key, so the old marker no longer applies, and
 # the rows are not cached over its absence, so an in-place repair that leaves
 # the directory's mtime alone is still noticed.
-touch -d '2 minutes' "$failed_backgrounds/broken.mp4"
-PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$generator_failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
+printf 'repaired video\n' >"$failed_backgrounds/broken.mp4"
+PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$generator_failed_cache" THUMBNAILER_CALLS="$thumbnailer_calls" \
   "$ROOT/bin/omarchy-menu-images" --prepare-only "$failed_backgrounds"
 [[ -s $thumbnailer_calls ]] || fail "menu image generator retries a video that changed since it was rejected"
 
@@ -273,10 +324,10 @@ cat >"$test_tmp/bin/ffmpegthumbnailer" <<'SH'
 #!/bin/bash
 exit 124
 SH
-timeout_rows=$(PATH="$test_tmp/bin:$PATH" XDG_CACHE_HOME="$timeout_cache" \
+timeout_rows=$(PATH="$test_tmp/bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_NEED_BIN="${OMARCHY_NEED_BIN:-need}" XDG_CACHE_HOME="$timeout_cache" \
   "$ROOT/shell/plugins/image-picker/list.sh" "$timeout_backgrounds")
 [[ -z $timeout_rows ]] || fail "direct picker omits a video whose thumbnail timed out" "$timeout_rows"
-timeout_marker=$(find "$timeout_cache/omarchy/image-selector" -maxdepth 1 -type f -name '*.failed' -print -quit)
+timeout_marker=$(find "$timeout_cache/omarchy/image-selector" -type f -name '*.failed' -print -quit)
 [[ -z $timeout_marker ]] || fail "a timed out video is left to retry rather than remembered as failed"
 
 grep -qx 'owe' "$ROOT/install/omarchy-base.packages" || fail "OWE is a base package"

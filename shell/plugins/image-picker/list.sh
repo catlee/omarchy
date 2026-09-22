@@ -2,11 +2,8 @@
 
 image_dirs=${1:-}
 cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/image-selector
-index_file="$cache_dir/index.tsv"
-pending_video_file=$(mktemp)
 
 mkdir -p "$cache_dir"
-trap 'rm -f "$pending_video_file"' EXIT
 
 is_video_path() {
   [[ ${1,,} =~ \.(mp4|m4v|mov|webm|mkv|avi)$ ]]
@@ -14,74 +11,23 @@ is_video_path() {
 
 thumbnail_path_for() {
   local image="$1"
-  local signature hash
+  local kind="still"
 
-  signature=$(stat -Lc '%s:%Y' "$image") || return
-  hash=$(awk -F '\t' -v path="$image" -v sig="$signature" '$1 == path && $2 == sig { print $3; exit }' "$index_file" 2>/dev/null)
-
-  if [[ -z $hash ]]; then
-    hash=$(printf '%s\t%s' "$image" "$signature" | md5sum | cut -d ' ' -f 1)
+  if is_video_path "$image"; then
+    kind="video"
   fi
-
-  printf '%s/%s.jpg' "$cache_dir" "$hash"
-}
-
-generate_video_thumbnail() {
-  local image="$1"
-  local thumbnail="$2"
-  local lock="$thumbnail.lock"
-  local lock_fd
-  local tmp="$thumbnail.$$.jpg"
-
-  if [[ -d $lock ]] && (( $(date +%s) - $(stat -c '%Y' "$lock" 2>/dev/null || date +%s) > 120 )); then
-    rmdir "$lock" 2>/dev/null
-  fi
-
-  exec {lock_fd}>"$lock" || return
-  flock -w 30 "$lock_fd" || return
-  rm -f "$thumbnail".*.jpg
-
-  [[ -f $thumbnail ]] && return
-
-  if timeout -k 5 10 ffmpegthumbnailer -i "$image" -o "$tmp" -s 1536 -q 8 {lock_fd}>&-; then
-    mv -f "$tmp" "$thumbnail"
-  else
-    status=$?
-    rm -f "$tmp" "$thumbnail"
-    # Remember a rejected video so it costs nothing on the next scan; the key
-    # covers size and mtime, so a repaired file starts clean. A timeout is
-    # left to retry: the machine may only have been busy.
-    (( status == 124 || status == 137 )) || : >"$thumbnail.failed"
-    return 1
-  fi
-}
-
-drain_pending_video_thumbnails() {
-  local video_jobs
-
-  [[ -s $pending_video_file ]] || return 0
-
-  video_jobs=$(( $(nproc) / 4 ))
-  (( video_jobs > 0 )) || video_jobs=1
-  export -f generate_video_thumbnail
-  xargs -a "$pending_video_file" -0 -n 2 -P "$video_jobs" \
-    bash -c 'generate_video_thumbnail "$1" "$2"' _ >/dev/null 2>&1 || true
+  printf '%s/thumbnails/%s/%s.jpg' "$cache_dir" "$kind" "$(printf '%s' "$image" | base64 -w 0 | tr '+/' '-_' | tr -d '=')"
 }
 
 thumbnail_for() {
   local image="$1"
-  local thumbnail legacy_hash
+  local thumbnail
 
   thumbnail=$(thumbnail_path_for "$image") || return
 
-  if [[ ! -f $thumbnail ]] && ! is_video_path "$image"; then
-    # Older on-demand picker code keyed fallback thumbnails by file content.
-    # Keep finding those if a user still has them cached.
-    legacy_hash=$(md5sum "$image" 2>/dev/null | cut -d ' ' -f 1)
-    [[ -n $legacy_hash && -f $cache_dir/$legacy_hash.jpg ]] && thumbnail="$cache_dir/$legacy_hash.jpg"
-  fi
-
-  if [[ -f $thumbnail ]]; then
+  if is_video_path "$image" && [[ -f $thumbnail.failed ]]; then
+    return
+  elif [[ -f $thumbnail ]]; then
     printf '%s' "$thumbnail"
   elif ! is_video_path "$image"; then
     printf '%s' "$image"
@@ -98,14 +44,18 @@ mapfile -d '' -t images < <(
   done <<<"$image_dirs" | sort -z
 )
 
+video_images=()
 for image in "${images[@]}"; do
-  if is_video_path "$image"; then
-    thumbnail=$(thumbnail_path_for "$image") || continue
-    [[ -f $thumbnail || -f $thumbnail.failed ]] || printf '%s\0%s\0' "$image" "$thumbnail" >>"$pending_video_file"
-  fi
+  is_video_path "$image" && video_images+=("$image")
 done
-
-drain_pending_video_thumbnails
+if (( ${#video_images[@]} > 0 )); then
+  video_jobs=$(( $(nproc) / 4 ))
+  (( video_jobs > 0 )) || video_jobs=1
+  for image in "${video_images[@]}"; do
+    printf '%s' "$image" | base64 -w 0 | tr '+/' '-_' | tr -d '='
+    printf '\0'
+  done | "${OMARCHY_NEED_BIN:-need}" --file "$OMARCHY_PATH/needfile" --root "$cache_dir" -j "$video_jobs" get -0 --from - 'thumbnails/video/%.jpg: %' >/dev/null 2>&1 || true
+fi
 
 for image in "${images[@]}"; do
   thumbnail=$(thumbnail_for "$image")
