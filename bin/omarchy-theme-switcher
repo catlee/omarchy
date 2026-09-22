@@ -17,21 +17,8 @@ CACHE_PATH="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/theme-selector"
 preview_dir="$CACHE_PATH/previews"
 
 mkdir -p "$CACHE_PATH"
-theme_symlink_dependencies=()
-for theme_path in "$USER_THEMES_PATH" "$OMARCHY_THEMES_PATH"; do
-  if [[ -d $theme_path ]]; then
-    while IFS= read -r -d '' theme_link; do
-      resolved_theme_path=$(readlink -f -- "$theme_link")
-      if [[ -d $resolved_theme_path ]]; then
-        theme_symlink_dependencies+=("tree($(printf '%q' "$resolved_theme_path"))")
-      fi
-    done < <(find "$theme_path" -mindepth 1 -maxdepth 1 -type l -print0 2>/dev/null)
-  fi
-done
-
 export OMARCHY_THEME_USER_PATH="$USER_THEMES_PATH"
 export OMARCHY_THEME_PATH="$OMARCHY_THEMES_PATH"
-export OMARCHY_THEME_SYMLINK_DEPS="${theme_symlink_dependencies[*]}"
 need --file "$OMARCHY_PATH/needfile" --root "$CACHE_PATH" previews/.built
 
 current_theme=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true)

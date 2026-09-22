@@ -5,6 +5,7 @@
 kind="$1"
 source="$2"
 output="$3"
+failed_output="${4:-$output.failed}"
 temporary="$output.$$.tmp"
 
 if [[ $kind == "still" ]]; then
@@ -17,13 +18,12 @@ if [[ $kind == "still" ]]; then
 elif [[ $kind == "video" ]]; then
   if timeout -k 5 10 ffmpegthumbnailer -i "$source" -o "$temporary" -s 1536 -q 8; then
     mv -f "$temporary" "$output"
-    rm -f "$output.failed"
+    rm -f "$failed_output"
   else
     status=$?
-    rm -f "$temporary"
+    rm -f "$temporary" "$output"
     if (( status != 124 && status != 137 )); then
-      : >"$output.failed"
-      : >"$output"
+      : >"$failed_output"
       exit 0
     fi
     exit "$status"
