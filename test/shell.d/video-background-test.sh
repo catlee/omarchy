@@ -13,6 +13,8 @@ const backgroundQml = fs.readFileSync(path.join(root, 'shell/plugins/background/
 const lockQml = fs.readFileSync(path.join(root, 'shell/plugins/lock/LockView.qml'), 'utf8')
 const lockFeedQml = fs.readFileSync(path.join(root, 'shell/plugins/lock/LockFeedSurface.qml'), 'utf8')
 const themeSwitcher = fs.readFileSync(path.join(root, 'bin/omarchy-theme-switcher'), 'utf8')
+const themePreviewBuilder = fs.readFileSync(path.join(root, 'bin/omarchy-theme-preview-build'), 'utf8')
+const themeNeedfile = fs.readFileSync(path.join(root, 'needfile'), 'utf8')
 const quattroUpgrade = fs.readFileSync(path.join(root, 'bin/omarchy-upgrade-to-quattro'), 'utf8')
 const barTextColor = fs.readFileSync(path.join(root, 'bin/omarchy-bar-text-color'), 'utf8')
 const menuImages = fs.readFileSync(path.join(root, 'bin/omarchy-menu-images'), 'utf8')
@@ -98,8 +100,11 @@ assert(
   'video thumbnails fan out narrower than single-threaded vips jobs'
 )
 assert(
-  themeSwitcher.includes('fast_signature="v2"'),
-  'the theme preview cache rebuilds after preview discovery learned about video'
+  themeSwitcher.includes('need --file') &&
+    themeSwitcher.includes('--root') &&
+    themeNeedfile.includes('tree(') &&
+    themeNeedfile.includes('@outputs(.need/previews.outputs)'),
+  'Need owns theme preview freshness and dynamic output tracking'
 )
 assert(
   /lazy_thumbnails == true && \$cache_only != true \]\] && ! is_video_path/.test(menuImages),
@@ -154,9 +159,10 @@ assert(
   'the battery service tracks the active power-saver profile'
 )
 assert(
-  themeSwitcher.includes("-iname '*.mp4'") &&
-    themeSwitcher.includes('mp4 m4v mov webm mkv avi') &&
-    themeSwitcher.includes('preview.mp4'),
+  themePreviewBuilder.includes("-iname '*.mp4'") &&
+    themePreviewBuilder.includes("-iname '*.m4v'") &&
+    themePreviewBuilder.includes("-iname '*.avi'") &&
+    themePreviewBuilder.includes('preview.mp4'),
   'theme switcher previews video-only themes, named preview files included'
 )
 assert(quattroUpgrade.includes("-iname '*.mp4'"), 'Quattro upgrade can seed a video-only theme background')
