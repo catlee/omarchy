@@ -154,7 +154,7 @@ thumbnail_for() {
 }
 
 thumbnail_key() {
-  printf '%s' "$1" | base64 -w 0 | tr '+/' '-_' | tr -d '='
+  printf '%s' "$1" | sha256sum | cut -d ' ' -f 1
 }
 
 build_thumbnails() {
@@ -164,9 +164,9 @@ build_thumbnails() {
   (( $# > 0 )) || return
 
   for image in "$@"; do
-    thumbnail_key "$image"
-    printf '\0'
-  done | "${OMARCHY_NEED_BIN:-need}" --file "$OMARCHY_PATH/needfile" --root "$cache_dir" -j "$jobs" get -0 --from - "thumbnails/$kind/%.jpg: %" >/dev/null 2>&1 || true
+    printf 'thumbnails/%s/%s.jpg: ' "$kind" "$(thumbnail_key "$image")"
+    printf '%q\n' "$image"
+  done | "${OMARCHY_NEED_BIN:-need}" --file "$OMARCHY_PATH/needfile" --root "$cache_dir" -j "$jobs" get --from - >/dev/null 2>&1 || true
 }
 
 if [[ $rows_cache_hit == true ]]; then

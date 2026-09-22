@@ -116,7 +116,7 @@ assert(
   'a stalled video cannot hold the picker shut, because its generator is time bounded'
 )
 assert(
-  directImageList.includes('thumbnails/video/%.jpg: %') &&
+  directImageList.includes('get --from -') &&
     directImageList.includes('OMARCHY_NEED_BIN') &&
     !directImageList.includes('md5sum "$image"'),
   'a direct picker scan shares Need-managed video thumbnails without content-hashing media'

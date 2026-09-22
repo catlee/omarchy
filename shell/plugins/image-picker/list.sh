@@ -16,7 +16,7 @@ thumbnail_path_for() {
   if is_video_path "$image"; then
     kind="video"
   fi
-  printf '%s/thumbnails/%s/%s.jpg' "$cache_dir" "$kind" "$(printf '%s' "$image" | base64 -w 0 | tr '+/' '-_' | tr -d '=')"
+  printf '%s/thumbnails/%s/%s.jpg' "$cache_dir" "$kind" "$(printf '%s' "$image" | sha256sum | cut -d ' ' -f 1)"
 }
 
 thumbnail_for() {
@@ -52,9 +52,9 @@ if (( ${#video_images[@]} > 0 )); then
   video_jobs=$(( $(nproc) / 4 ))
   (( video_jobs > 0 )) || video_jobs=1
   for image in "${video_images[@]}"; do
-    printf '%s' "$image" | base64 -w 0 | tr '+/' '-_' | tr -d '='
-    printf '\0'
-  done | "${OMARCHY_NEED_BIN:-need}" --file "$OMARCHY_PATH/needfile" --root "$cache_dir" -j "$video_jobs" get -0 --from - 'thumbnails/video/%.jpg: %' >/dev/null 2>&1 || true
+    printf 'thumbnails/video/%s.jpg: ' "$(printf '%s' "$image" | sha256sum | cut -d ' ' -f 1)"
+    printf '%q\n' "$image"
+  done | "${OMARCHY_NEED_BIN:-need}" --file "$OMARCHY_PATH/needfile" --root "$cache_dir" -j "$video_jobs" get --from - >/dev/null 2>&1 || true
 fi
 
 for image in "${images[@]}"; do

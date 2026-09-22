@@ -3,33 +3,13 @@
 # omarchy:hidden=true
 
 kind="$1"
-encoded_source="$2"
+source="$2"
 output="$3"
-depfile="$4"
 temporary="$output.$$.tmp"
-
-encoded_source=${encoded_source//-/+}
-encoded_source=${encoded_source//_/\/}
-case $(( ${#encoded_source} % 4 )) in
-  2) encoded_source+="==" ;;
-  3) encoded_source+="=" ;;
-esac
-source=$(printf '%s' "$encoded_source" | base64 -d)
-
-write_depfile() {
-  local escaped_source="$source"
-
-  escaped_source=${escaped_source//\\/\\\\}
-  escaped_source=${escaped_source// /\\ }
-  escaped_source=${escaped_source//#/\\#}
-  escaped_source=${escaped_source//:/\\:}
-  printf '%s: %s\n' "$output" "$escaped_source" >"$depfile"
-}
 
 if [[ $kind == "still" ]]; then
   if env VIPS_CONCURRENCY=1 vipsthumbnail "$source" --size 1536x864 --smartcrop=centre --path "$temporary[Q=82,strip]"; then
     mv -f "$temporary" "$output"
-    write_depfile
   else
     rm -f "$temporary"
     exit 1
@@ -38,14 +18,12 @@ elif [[ $kind == "video" ]]; then
   if timeout -k 5 10 ffmpegthumbnailer -i "$source" -o "$temporary" -s 1536 -q 8; then
     mv -f "$temporary" "$output"
     rm -f "$output.failed"
-    write_depfile
   else
     status=$?
     rm -f "$temporary"
     if (( status != 124 && status != 137 )); then
       : >"$output.failed"
       : >"$output"
-      write_depfile
       exit 0
     fi
     exit "$status"

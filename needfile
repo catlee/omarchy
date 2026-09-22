@@ -7,9 +7,7 @@ previews/.built: tree({{user_themes}}) tree({{omarchy_themes}}) {{symlink_themes
   {{needfile.dir}}/bin/omarchy-theme-preview-build {{user_themes}} {{omarchy_themes}} previews .need/previews.outputs
 
 thumbnails/still/%.jpg:
-  @depfile(thumbnails/still/{{stem}}.d)
-  {{needfile.dir}}/bin/omarchy-thumbnail-build still {{stem}} {{out}} thumbnails/still/{{stem}}.d
+  {{needfile.dir}}/bin/omarchy-thumbnail-build still {{in}} {{out}}
 
 thumbnails/video/%.jpg:
-  @depfile(thumbnails/video/{{stem}}.d)
-  {{needfile.dir}}/bin/omarchy-thumbnail-build video {{stem}} {{out}} thumbnails/video/{{stem}}.d
+  {{needfile.dir}}/bin/omarchy-thumbnail-build video {{in}} {{out}}
