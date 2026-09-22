@@ -1,15 +1,15 @@
 user_themes = "{{env.OMARCHY_THEME_USER_PATH}}"
 omarchy_themes = "{{env.OMARCHY_THEME_PATH}}"
 
+@outputs-from(.need/previews.outputs)
 previews/.built: tree({{user_themes}}, follow-symlinks=true) tree({{omarchy_themes}}, follow-symlinks=true)
-  @outputs(.need/previews.outputs)
   {{needfile.dir}}/bin/omarchy-theme-preview-build {{user_themes}} {{omarchy_themes}} previews .need/previews.outputs
 
+@atomic
 thumbnails/still/%.jpg:
-  @atomic
   {{needfile.dir}}/bin/omarchy-thumbnail-build still {{in}} {{out}}
 
+@atomic
+@allow-missing
 thumbnails/video/%.jpg thumbnails/video/%.jpg.failed:
-  @atomic
-  @allow-missing
   {{needfile.dir}}/bin/omarchy-thumbnail-build video {{in}} {{out[0]}} {{out[1]}}
