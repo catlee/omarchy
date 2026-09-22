@@ -6,22 +6,15 @@ kind="$1"
 source="$2"
 output="$3"
 failed_output="${4:-$output.failed}"
-temporary="$output.$$.tmp"
 
 if [[ $kind == "still" ]]; then
-  if env VIPS_CONCURRENCY=1 vipsthumbnail "$source" --size 1536x864 --smartcrop=centre --path "$temporary[Q=82,strip]"; then
-    mv -f "$temporary" "$output"
-  else
-    rm -f "$temporary"
-    exit 1
-  fi
+  env VIPS_CONCURRENCY=1 vipsthumbnail "$source" --size 1536x864 --smartcrop=centre --path "$output[Q=82,strip]"
 elif [[ $kind == "video" ]]; then
-  if timeout -k 5 10 ffmpegthumbnailer -i "$source" -o "$temporary" -s 1536 -q 8; then
-    mv -f "$temporary" "$output"
+  if timeout -k 5 10 ffmpegthumbnailer -i "$source" -o "$output" -s 1536 -q 8; then
     rm -f "$failed_output"
   else
     status=$?
-    rm -f "$temporary" "$output"
+    rm -f "$output"
     if (( status != 124 && status != 137 )); then
       : >"$failed_output"
       exit 0
