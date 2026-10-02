@@ -27,10 +27,14 @@ fi
 
 state_file="${XDG_RUNTIME_DIR:-/tmp/omarchy-$UID}/omarchy-keyboard-backlight-$device"
 
+# Blank and wake run as separate processes, so a restore must wait for an in-flight off.
+mkdir -p "$(dirname "$state_file")" || exit 1
+exec {lock_fd}>"$state_file.lock" || exit 1
+flock "$lock_fd" || exit 1
+
 if [[ $direction == "off" ]]; then
   if [[ ! -f $state_file ]]; then
     current_brightness="$(brightnessctl -d "$device" get)" || exit 1
-    mkdir -p "$(dirname "$state_file")" || exit 1
     printf '%s\n' "$current_brightness" >"$state_file" || {
       rm -f "$state_file"
       exit 1
@@ -69,4 +73,5 @@ fi
 # Set the new brightness.
 brightnessctl -d "$device" set "$new_brightness" >/dev/null || exit 1
 rm -f "$state_file" || exit 1
+exec {lock_fd}>&-
 (( no_osd )) || omarchy-osd -i keyboard -p "$(( new_brightness * 100 / max_brightness ))"

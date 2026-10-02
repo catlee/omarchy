@@ -81,6 +81,7 @@ assert_brightness() {
 printf '2\n' >"$brightness_file"
 run_brightness off
 run_brightness off
+assert_brightness 0 "blanking turns the keyboard off"
 run_brightness restore
 assert_brightness 2 "a keyboard that starts on is restored to its previous level"
 [[ ! -e $state_file ]] || fail "restoring clears the saved keyboard brightness"
@@ -116,7 +117,37 @@ assert_brightness 1 "a failed manual brightness change leaves the keyboard uncha
 [[ $(<"$state_file") == 2 ]] || fail "a failed manual brightness change preserves the saved level"
 pass "a failed manual brightness change preserves the saved level"
 
+# Hold the lock as an in-flight off would, and finish that off only after a restore has started.
 rm -f "$state_file"
+printf '2\n' >"$brightness_file"
+exec {held_fd}>"$state_file.lock"
+flock "$held_fd"
+run_brightness restore {held_fd}>&- &
+restore_pid=$!
+restore_waiting() {
+  local children
+  children=$(pgrep -d, -P "$restore_pid" || true)
+  pgrep -x -P "$restore_pid${children:+,$children}" flock >/dev/null
+}
+for _ in {1..50}; do
+  restore_waiting && break
+  sleep 0.1
+done
+restore_waiting || fail "a restore waits for the blank lock"
+pass "a restore waits for the blank lock"
+printf '2\n' >"$state_file"
+printf '0\n' >"$brightness_file"
+exec {held_fd}>&-
+for _ in {1..50}; do
+  kill -0 "$restore_pid" 2>/dev/null || break
+  sleep 0.1
+done
+kill -0 "$restore_pid" 2>/dev/null && kill "$restore_pid" && fail "a restore finishes once the blank releases its lock"
+wait "$restore_pid"
+assert_brightness 2 "a restore waits for an in-flight blank to save its level"
+
+rm -f "$state_file"
+printf '1\n' >"$brightness_file"
 rm -rf "$runtime_dir"
 printf 'not a directory\n' >"$runtime_dir"
 if run_brightness off >/dev/null 2>&1; then
