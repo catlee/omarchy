@@ -65,13 +65,15 @@ ShellRoot {
           Mock.UPower.displayDevice.percentage = 1
           Qt.callLater(function() {
             var fullBatteryIcon = power.testBatteryIcon
+            var changesBeforePlug = test.batteryIconChanges
             Mock.UPower.onBattery = false
             Qt.callLater(function() {
               test.check(power.testBatteryIcon === "󰂅", "AC updates a stale full battery state to the connected glyph")
+              test.check(test.batteryIconChanges === changesBeforePlug + 1, "AC emits a battery glyph change with state and percentage fixed")
               Mock.UPower.onBattery = true
               Qt.callLater(function() {
                 test.check(power.testBatteryIcon === fullBatteryIcon && fullBatteryIcon === "󰁹", "unplug updates the stale full battery state to the battery glyph")
-                test.check(test.batteryIconChanges >= 2, "battery text binding emits change signals for both power events")
+                test.check(test.batteryIconChanges === changesBeforePlug + 2, "unplug emits a battery glyph change with state and percentage fixed")
                 if (!test.failed) console.log("RESULT pass")
                 done.start()
               })
